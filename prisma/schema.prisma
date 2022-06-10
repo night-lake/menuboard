@@ -1,0 +1,21 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./data.db"
+}
+
+model StarQueue {
+  messageId BigInt @unique
+  starCount Int    @default(0)
+}
+
+model GuildConfig {
+  guildId      BigInt @unique
+  boardChannel BigInt
+}
