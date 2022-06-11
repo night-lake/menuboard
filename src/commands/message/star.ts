@@ -1,6 +1,16 @@
 import { db } from '../../db';
 import { MessageCommand } from 'slashasaurus';
-import { Guild, GuildMember, Message, MessageEmbed, User } from 'discord.js';
+import {
+    CacheType,
+    Guild,
+    GuildMember,
+    Message,
+    MessageContextMenuInteraction,
+    MessageEmbed,
+    NewsChannel,
+    TextChannel,
+    User
+} from 'discord.js';
 
 async function getNickname(guild: Guild, user: User) {
     if (!guild) {
@@ -16,11 +26,39 @@ async function getNickname(guild: Guild, user: User) {
     return member?.nickname ?? member.user.tag;
 }
 
+async function handleLowerThanStarCount(
+    interaction: MessageContextMenuInteraction<CacheType>,
+    starData: { starCount: number },
+    id: string
+) {
+    await db.starQueue.upsert({
+        create: {
+            messageId: BigInt(id),
+            starCount: 1
+        },
+        update: {
+            starCount: (starData?.starCount ?? 0) + 1
+        },
+        where: {
+            messageId: BigInt(id)
+        }
+    });
+
+    await db.userToMessageMap.create({
+        data: {
+            messageId: BigInt(id),
+            userId: BigInt(interaction.user.id)
+        }
+    });
+
+    return interaction.reply({ content: 'Just a few stars missing.', ephemeral: true });
+}
+
 export default new MessageCommand(
     {
         name: 'Star'
     },
-    async interaction => {
+    async (interaction, client) => {
         const message = interaction.targetMessage as Message;
         const id = interaction.targetMessage.id;
         const author = interaction.targetMessage.author as User;
@@ -57,8 +95,10 @@ export default new MessageCommand(
         const { boardChannel, minStarCount } = guildConfig;
 
         // ANCHOR: Permissions check & self-star check
-        if (!interaction.channel.permissionsFor(interaction.guild.roles.everyone).has('VIEW_CHANNEL')) {
-            return interaction.reply({ content: 'You cannot star messages from this channel.', ephemeral: true });
+        if (message.channel instanceof TextChannel || message.channel instanceof NewsChannel) {
+            if (!message.channel.permissionsFor(interaction.guild.roles.everyone).has('VIEW_CHANNEL')) {
+                return interaction.reply({ content: 'You cannot star messages from this channel.', ephemeral: true });
+            }
         }
 
         if (author.id === interaction.user.id) {
@@ -75,48 +115,29 @@ export default new MessageCommand(
             }
         });
 
-        if (!starData || starData?.starCount < minStarCount) {
-            await db.starQueue.upsert({
-                create: {
-                    messageId: BigInt(id),
-                    starCount: 1
-                },
-                update: {
-                    starCount: (starData?.starCount ?? 0) + 1
-                },
-                where: {
-                    messageId: BigInt(id)
-                }
-            });
+        if (!starData) {
+            client.logger.info('no star data found');
+            return await handleLowerThanStarCount(interaction, starData, id);
+        }
 
-            await db.userToMessageMap.create({
-                data: {
-                    messageId: BigInt(id),
-                    userId: BigInt(interaction.user.id)
-                }
-            });
+        const { starCount } = starData;
 
-            return interaction.reply({ content: 'Just a few stars missing.', ephemeral: true });
+        client.logger.info({
+            minStarCount,
+            lessThanStarCount: starCount < minStarCount,
+            higherThanMinStarCount: starCount > minStarCount,
+            isStarCount: starCount === minStarCount
+        });
+
+        // ANCHOR: Checks for whether it is lower than star count
+        if (starCount < minStarCount) {
+            return await handleLowerThanStarCount(interaction, starData, id);
         }
 
         // ANCHOR: Post message to starboard
-        const { starCount } = starData;
-
-        if (starCount > minStarCount) {
-            await db.userToMessageMap.create({
-                data: {
-                    messageId: BigInt(id),
-                    userId: BigInt(interaction.user.id)
-                }
-            });
-
-            return interaction.reply({
-                content: 'We appreciate the enthusiam but this message has already been starred.',
-                ephemeral: true
-            });
-        }
-
-        if (starCount === minStarCount) {
+        if (starData?.starCount === minStarCount) {
+            interaction.deferReply();
+            client.logger.info('hi');
             const channel = await interaction.guild.channels.fetch(boardChannel.toString());
 
             const embed = new MessageEmbed()
@@ -143,6 +164,21 @@ export default new MessageCommand(
             }
 
             return interaction.reply({ content: ':star: Off to the chart!', ephemeral: true });
+        }
+
+        // ANCHOR: Checks for whether it is higher than star count
+        if (starCount > minStarCount) {
+            await db.userToMessageMap.create({
+                data: {
+                    messageId: BigInt(id),
+                    userId: BigInt(interaction.user.id)
+                }
+            });
+
+            return interaction.reply({
+                content: 'We appreciate the enthusiam but this message has already been starred.',
+                ephemeral: true
+            });
         }
     }
 );
