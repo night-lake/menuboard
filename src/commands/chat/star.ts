@@ -1,7 +1,6 @@
 import { ChannelType } from 'discord-api-types/v10';
-import { Channel } from 'discord.js';
-import { ApplicationCommandOptionTypes } from 'discord.js/typings/enums';
 import { SlashCommand } from 'slashasaurus';
+import { inspect } from 'util';
 
 export default new SlashCommand(
     {
@@ -18,14 +17,15 @@ export default new SlashCommand(
         ]
     },
     {
-        run: async (interaction, client, { channel }) => {
-            const guildClientUser = await interaction.guild.members.fetch(client.user.id);
+        run: async (interaction, _client, options) => {
+            // const channel = options.channel
+            // const guildClientUser = await interaction.guild.members.fetch(client.user.id);
 
-            if (!interaction.channel.permissionsFor(guildClientUser).has('SEND_MESSAGES')) {
-                return interaction.reply({ content: 'The bot cannot send messages in this channel.', ephemeral: true });
-            }
+            // if (!channel.permissionsFor(guildClientUser).has('SEND_MESSAGES')) {
+            //     return interaction.reply({ content: 'The bot cannot send messages in this channel.', ephemeral: true });
+            // }
 
-			gui
+            interaction.reply({ embeds: [{ description: inspect(options.channel) }] });
         }
     }
 );

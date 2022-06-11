@@ -25,28 +25,38 @@ export default new MessageCommand(
         const id = interaction.targetMessage.id;
         const author = interaction.targetMessage.author as User;
 
-        const { starCount } = await db.starQueue.findFirst({
-            select: {
-                starCount: true
-            },
+        // ANCHOR: Check if user has already starred this message.
+        const userHasStarred = await db.userToMessageMap.findUnique({
             where: {
-                messageId: BigInt(id)
+                messageId_userId: {
+                    messageId: BigInt(id),
+                    userId: BigInt(interaction.user.id)
+                }
             }
         });
 
-        const { boardChannel } = await db.guildConfig.findFirst({
+        if (userHasStarred) {
+            return interaction.reply({ content: 'You have already starred that message.', ephemeral: true });
+        }
+
+        // ANCHOR: No starboard channel set check & get `minStarCount`
+        const guildConfig = await db.guildConfig.findFirst({
             select: {
-                boardChannel: true
+                boardChannel: true,
+                minStarCount: true
             },
             where: {
                 guildId: BigInt(interaction.guildId)
             }
         });
 
-        if (!boardChannel) {
+        if (!guildConfig?.boardChannel) {
             return interaction.reply({ content: 'No starboard channel has been set.', ephemeral: true });
         }
 
+        const { boardChannel, minStarCount } = guildConfig;
+
+        // ANCHOR: Permissions check & self-star check
         if (!interaction.channel.permissionsFor(interaction.guild.roles.everyone).has('VIEW_CHANNEL')) {
             return interaction.reply({ content: 'You cannot star messages from this channel.', ephemeral: true });
         }
@@ -55,24 +65,58 @@ export default new MessageCommand(
             return interaction.reply(`Bad <@${author.id}>, trying to star their own message.`);
         }
 
-        if (!starCount ?? starCount < 4) {
-            db.starQueue.upsert({
+        // ANCHOR: Get star data & upsert the new star count
+        const starData = await db.starQueue.findFirst({
+            select: {
+                starCount: true
+            },
+            where: {
+                messageId: BigInt(id)
+            }
+        });
+
+        if (!starData || starData?.starCount < minStarCount) {
+            await db.starQueue.upsert({
                 create: {
                     messageId: BigInt(id),
                     starCount: 1
                 },
                 update: {
-                    starCount: starCount + 1
+                    starCount: (starData?.starCount ?? 0) + 1
                 },
                 where: {
                     messageId: BigInt(id)
                 }
             });
 
+            await db.userToMessageMap.create({
+                data: {
+                    messageId: BigInt(id),
+                    userId: BigInt(interaction.user.id)
+                }
+            });
+
             return interaction.reply({ content: 'Just a few stars missing.', ephemeral: true });
         }
 
-        if (starCount > 4) {
+        // ANCHOR: Post message to starboard
+        const { starCount } = starData;
+
+        if (starCount > minStarCount) {
+            await db.userToMessageMap.create({
+                data: {
+                    messageId: BigInt(id),
+                    userId: BigInt(interaction.user.id)
+                }
+            });
+
+            return interaction.reply({
+                content: 'We appreciate the enthusiam but this message has already been starred.',
+                ephemeral: true
+            });
+        }
+
+        if (starCount === minStarCount) {
             const channel = await interaction.guild.channels.fetch(boardChannel.toString());
 
             const embed = new MessageEmbed()
@@ -83,6 +127,7 @@ export default new MessageCommand(
                 .setColor('GOLD')
                 .setDescription(message.content);
 
+            // ANCHOR: Get the first image to display in the embed.
             const image = message.attachments.find(
                 attachment => attachment.name.endsWith('.png') || attachment.name.endsWith('.jpg')
             );
