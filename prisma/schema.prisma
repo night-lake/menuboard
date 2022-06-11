@@ -18,4 +18,12 @@ model StarQueue {
 model GuildConfig {
   guildId      BigInt @unique
   boardChannel BigInt
+  minStarCount Int    @default(5)
+}
+
+model UserToMessageMap {
+  messageId BigInt
+  userId    BigInt
+
+  @@unique([messageId, userId])
 }

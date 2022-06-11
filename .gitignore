@@ -105,4 +105,4 @@ dist
 
 # Prisma database
 prisma/data.db
-prisma/data.sqlite3-journal
+prisma/data.db-journal
